@@ -4,6 +4,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -343,7 +345,7 @@ server_dispatch_thread(void *priv)
 		vtc_log(vl, 3, "dispatch fd %d -> %s", fd, snbuf);
 		s2 = server_new(snbuf, vl);
 		s2->spec = s->spec;
-		strcpy(s2->listen, s->listen);
+		bstrcpy(s2->listen, s->listen);
 		s2->fd = fd;
 		s2->run = 1;
 		AZ(pthread_create(&s2->tp, NULL, server_dispatch_wrk, s2));
@@ -376,6 +378,7 @@ server_break(struct server *s)
 	vtc_log(s->vl, 2, "Breaking for server");
 	(void)pthread_cancel(s->tp);
 	AZ(pthread_join(s->tp, &res));
+	VTCP_close(&s->sock);
 	s->tp = 0;
 	s->run = 0;
 }

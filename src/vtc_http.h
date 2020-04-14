@@ -4,6 +4,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -47,7 +49,7 @@ struct http {
 	char			*rem_port;
 	char			*rem_path;
 	char			*body;
-	unsigned		bodyl;
+	long			bodyl;
 	char			bodylen[20];
 	char			chunklen[20];
 
@@ -74,5 +76,3 @@ struct http {
 	uint64_t		iws;
 	int64_t			ws;
 };
-
-

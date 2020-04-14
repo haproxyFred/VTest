@@ -4,6 +4,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -33,12 +35,14 @@
 #include <sys/wait.h>
 
 #include <ctype.h>
+#include <dirent.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 
 #include "vtc.h"
 
@@ -72,6 +76,7 @@ struct vtc_tst {
 	const char		*filename;
 	char			*script;
 	unsigned		ntodo;
+	unsigned		nwait;
 };
 
 struct vtc_job {
@@ -106,7 +111,6 @@ static char *cwd = NULL;
 char *vmod_path = NULL;
 struct vsb *params_vsb = NULL;
 int leave_temp;
-int vtc_witness = 0;
 static struct vsb *cbvsb;
 static int bad_backend_fd;
 
@@ -170,7 +174,7 @@ parse_D_opt(char *arg)
  * Print usage
  */
 
-static void
+static void v_noreturn_
 usage(void)
 {
 	fprintf(stderr, "usage: %s [options] file ...\n", argv0);
@@ -189,7 +193,6 @@ usage(void)
 	fprintf(stderr, FMT, "-q", "Quiet mode: report only failures");
 	fprintf(stderr, FMT, "-t duration", "Time tests out after this long");
 	fprintf(stderr, FMT, "-v", "Verbose mode: always report test log");
-	fprintf(stderr, FMT, "-W", "Enable the witness facility for locking");
 	exit(1);
 }
 
@@ -372,6 +375,11 @@ tst_cb(const struct vev *ve, int what)
 			VEV_Stop(vb, jp->evt);
 			free(jp->evt);
 		}
+		jp->tst->nwait--;
+		if (jp->tst->nwait == 0) {
+			free(jp->tst->script);
+			FREE_OBJ(jp->tst);
+		}
 		FREE_OBJ(jp);
 		return (1);
 	}
@@ -408,8 +416,7 @@ start_test(void)
 		VTAILQ_INSERT_TAIL(&tst_head, tp, list);
 
 	jp->tst = tp;
-	jp->tmpdir = strdup(tmpdir);
-	AN(jp->tmpdir);
+	REPLACE(jp->tmpdir, tmpdir);
 
 	AZ(pipe(p));
 	assert(p[0] > STDERR_FILENO);
@@ -453,14 +460,44 @@ start_test(void)
  * Find the abs path to top of source dir from Makefile, if that
  * fails, fall back on "../../"
  *
- * Set path to all programs build directories
+ * Set PATH to all programs build directories
+ * Set vmod_path to all vmods build directories
  *
  */
 
 static void
+build_path(const char *topbuilddir, const char *subdir,
+    const char *pfx, const char *sfx, struct vsb *vsb)
+{
+	char buf[PATH_MAX];
+	DIR *dir;
+	struct dirent *de;
+	struct stat st;
+	const char *sep = "";
+
+	bprintf(buf, "%s/%s/", topbuilddir, subdir);
+	dir = opendir(buf);
+	XXXAN(dir);
+	while (1) {
+		de = readdir(dir);
+		if (de == NULL)
+			break;
+		if (strncmp(de->d_name, pfx, strlen(pfx)))
+			continue;
+		bprintf(buf, "%s/%s/%s", topbuilddir, subdir, de->d_name);
+		if (!stat(buf, &st) && S_ISDIR(st.st_mode)) {
+			VSB_cat(vsb, sep);
+			VSB_cat(vsb, buf);
+			VSB_cat(vsb, sfx);
+			sep = ":";
+		}
+	}
+	AZ(closedir(dir));
+}
+
+static void
 i_mode(void)
 {
-	const char *sep;
 	struct vsb *vsb;
 	char *p, *q;
 	char *topbuild;
@@ -506,39 +543,27 @@ i_mode(void)
 	}
 	AN(topbuild);
 	extmacro_def("topbuild", "%s", topbuild);
+
 	/*
 	 * Build $PATH which can find all programs in the build tree
 	 */
-	VSB_printf(vsb, "PATH=");
-	sep = "";
-#define VTC_PROG(l)							\
-	do {								\
-		VSB_printf(vsb, "%s%s/bin/" #l, sep, topbuild);		\
-		sep = ":";						\
-	} while (0);
-#include "programs.h"
-
+	VSB_clear(vsb);
+	VSB_cat(vsb, "PATH=");
+	build_path(topbuild, "bin", "varnish", "", vsb);
 	VSB_printf(vsb, ":%s", getenv("PATH"));
 	AZ(VSB_finish(vsb));
-
 	AZ(putenv(strdup(VSB_data(vsb))));
 
 	/*
 	 * Build vmod_path which can find all VMODs in the build tree
 	 */
+
 	VSB_clear(vsb);
-	sep = "";
-#define VTC_VMOD(l)							\
-	do {								\
-		VSB_printf(vsb, "%s%s/lib/libvmod_" #l "/.libs",	\
-		    sep, topbuild);					\
-		sep = ":";						\
-	} while (0);
-#include "vmods.h"
-#undef VTC_VMOD
+	build_path(topbuild, "lib", "libvmod_", "/.libs", vsb);
 	AZ(VSB_finish(vsb));
 	vmod_path = strdup(VSB_data(vsb));
 	AN(vmod_path);
+
 	free(topbuild);
 	VSB_destroy(&vsb);
 
@@ -570,6 +595,7 @@ ip_magic(void)
 	AN(sa);
 	bad_backend_fd = VTCP_bind(sa, NULL);
 	assert(bad_backend_fd >= 0);
+	free(sa);
 	VTCP_myname(bad_backend_fd, abuf, sizeof abuf, pbuf, sizeof(pbuf));
 	extmacro_def("localhost", "%s", abuf);
 
@@ -642,6 +668,7 @@ read_file(const char *fn, int ntest)
 	tp->filename = fn;
 	tp->script = p;
 	tp->ntodo = ntest;
+	tp->nwait = ntest;
 	VTAILQ_INSERT_TAIL(&tst_head, tp, list);
 	return (0);
 }
@@ -689,7 +716,7 @@ main(int argc, char * const *argv)
 	AN(cbvsb);
 	setbuf(stdout, NULL);
 	setbuf(stderr, NULL);
-	while ((ch = getopt(argc, argv, "b:CD:hij:kLln:p:qt:vW")) != -1) {
+	while ((ch = getopt(argc, argv, "b:CD:hij:kLln:p:qt:v")) != -1) {
 		switch (ch) {
 		case 'b':
 			if (VNUM_2bytes(optarg, &bufsiz, 0)) {
@@ -733,7 +760,7 @@ main(int argc, char * const *argv)
 			ntest = strtoul(optarg, NULL, 0);
 			break;
 		case 'p':
-			VSB_printf(params_vsb, " -p ");
+			VSB_cat(params_vsb, " -p ");
 			VSB_quote(params_vsb, optarg, -1, 0);
 			break;
 		case 'q':
@@ -746,9 +773,6 @@ main(int argc, char * const *argv)
 		case 'v':
 			if (vtc_verbosity < 2)
 				vtc_verbosity++;
-			break;
-		case 'W':
-			vtc_witness++;
 			break;
 		default:
 			usage();

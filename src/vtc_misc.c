@@ -4,6 +4,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -352,14 +354,21 @@ dns_works(void)
 	char abuf[VTCP_ADDRBUFSIZE];
 	char pbuf[VTCP_PORTBUFSIZE];
 
-	sa = VSS_ResolveOne(NULL, "dns-canary.freebsd.dk", NULL, AF_UNSPEC, SOCK_STREAM, 0);
+	sa = VSS_ResolveOne(NULL, "dns-canary.varnish-cache.org", NULL,
+	    AF_INET, SOCK_STREAM, 0);
 	if (sa == NULL)
 		return (0);
 	VTCP_name(sa, abuf, sizeof abuf, pbuf, sizeof pbuf);
 	free(sa);
 	if (strcmp(abuf, "192.0.2.255"))
 		return (0);
-	return (1);
+
+	sa = VSS_ResolveOne(NULL, "dns-canary.varnish-cache.org", NULL,
+	    AF_INET6, SOCK_STREAM, 0);
+	if (sa == NULL)
+		return (1); /* the canary is ipv4 only */
+	free(sa);
+	return (0);
 }
 
 /* SECTION: feature feature

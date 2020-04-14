@@ -5,6 +5,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -38,7 +40,7 @@
 #ifndef VAS_H_INCLUDED
 #define VAS_H_INCLUDED
 
-#include <errno.h>
+#include "verrno.h"
 
 enum vas_e {
 	VAS_WRONG,

@@ -5,6 +5,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -178,8 +180,8 @@ VSUB_run(struct vsb *sb, vsub_func_f *func, void *priv, const char *name,
 			VSB_printf(sb, ", signal %d", WTERMSIG(status));
 		}
 		if (WCOREDUMP(status))
-			VSB_printf(sb, ", core dumped");
-		VSB_printf(sb, "\n");
+			VSB_cat(sb, ", core dumped");
+		VSB_cat(sb, "\n");
 		assert(rv != -1);
 		return (rv);
 	}

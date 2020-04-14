@@ -4,6 +4,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -31,7 +33,7 @@
 #define VSA_H_INCLUDED
 
 struct suckaddr;
-extern const int vsa_suckaddr_len;
+extern const size_t vsa_suckaddr_len;
 extern const struct suckaddr *bogo_ip;
 
 void VSA_Init(void);
@@ -54,6 +56,18 @@ struct suckaddr *VSA_Malloc(const void *s, unsigned  sal);
  * 's' is a sockaddr of some kind, 'sal' is its length.
  */
 struct suckaddr *VSA_Build(void *d, const void *s, unsigned sal);
+
+/* 'd' SHALL point to vsa_suckaddr_len aligned bytes of storage
+ *
+ * fam: address family
+ * a / al : address and length
+ * p / pl : port and length
+ *
+ * NULL or 0 length argument are ignored.
+ * argument of the wrong length are an error (NULL return value, EINVAL)
+ */
+struct suckaddr * VSA_BuildFAP(void *d, sa_family_t fam,
+    const void *a, unsigned al, const void *p, unsigned pl);
 
 /*
  * This VRT interface is for the VCC generated ACL code, which needs

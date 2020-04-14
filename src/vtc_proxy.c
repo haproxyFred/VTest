@@ -4,6 +4,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -100,9 +102,9 @@ vtc_send_proxy(int fd, int version, const struct suckaddr *sac,
 	if (version == 1) {
 		VSB_bcat(vsb, vpx1_sig, sizeof(vpx1_sig));
 		if (proto == PF_INET6)
-			VSB_printf(vsb, " TCP6 ");
+			VSB_cat(vsb, " TCP6 ");
 		else if (proto == PF_INET)
-			VSB_printf(vsb, " TCP4 ");
+			VSB_cat(vsb, " TCP4 ");
 		VTCP_name(sac, hc, sizeof(hc), pc, sizeof(pc));
 		VTCP_name(sas, hs, sizeof(hs), ps, sizeof(ps));
 		VSB_printf(vsb, "%s %s %s %s\r\n", hc, hs, pc, ps);
@@ -126,7 +128,7 @@ vtc_send_proxy(int fd, int version, const struct suckaddr *sac,
 		WRONG("Wrong proxy version");
 
 	AZ(VSB_finish(vsb));
-	i = VSB_tofile(fd, vsb);
+	i = VSB_tofile(vsb, fd);
 	VSB_delete(vsb);
 	return (i);
 }

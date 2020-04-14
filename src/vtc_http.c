@@ -4,6 +4,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -36,7 +38,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <zlib.h>
 
 #include "vtc.h"
 #include "vtc_http.h"
@@ -70,14 +71,15 @@ extern const struct cmds http_cmds[];
  * SECTION: client-server.macros Macros and automatic behaviour
  *
  * To make things easier in the general case, clients will connect by default
- * to the first Varnish server declared and the -vcl+backend switch of the
- * ``varnish`` command will add all the declared servers as backends.
+ * to a Varnish server called v1. To connect to a different Varnish server, use
+ * '-connect ${vNAME_sock}'.
  *
- * Be careful though, servers will by default listen to the 127.0.0.1 IP and
- * will pick a random port, and publish 3 macros: sNAME_addr, sNAME_port and
- * sNAME_sock, but only once they are started.
- * For 'varnish -vcl+backend' to create the vcl with the correct values, the
- * server must be started first.
+ * The -vcl+backend switch of the ``varnish`` command will add all the declared
+ * servers as backends. Be careful though, servers will by default listen to
+ * the 127.0.0.1 IP and will pick a random port, and publish 3 macros:
+ * sNAME_addr, sNAME_port and sNAME_sock, but only once they are started. For
+ * 'varnish -vcl+backend' to create the vcl with the correct values, the server
+ * must be started first.
  *
  * SECTION: client-server.args Arguments
  *
@@ -215,7 +217,7 @@ http_write(const struct http *hp, int lvl, const char *pfx)
 
 	AZ(VSB_finish(hp->vsb));
 	vtc_dump(hp->vl, lvl, pfx, VSB_data(hp->vsb), VSB_len(hp->vsb));
-	if (VSB_tofile(hp->fd, hp->vsb))
+	if (VSB_tofile(hp->vsb, hp->fd))
 		vtc_log(hp->vl, hp->fatal, "Write failed: %s",
 		    strerror(errno));
 }
@@ -429,20 +431,20 @@ http_splitheader(struct http *hp, int req)
 	hh[n++] = p;
 	while (!vct_islws(*p))
 		p++;
-	AZ(vct_iscrlf(p));
+	AZ(vct_iscrlf(p, hp->rx_e));
 	*p++ = '\0';
 
 	/* URL/STATUS */
 	while (vct_issp(*p))		/* XXX: H space only */
 		p++;
-	AZ(vct_iscrlf(p));
+	AZ(vct_iscrlf(p, hp->rx_e));
 	hh[n++] = p;
 	while (!vct_islws(*p))
 		p++;
-	if (vct_iscrlf(p)) {
+	if (vct_iscrlf(p, hp->rx_e)) {
 		hh[n++] = NULL;
 		q = p;
-		p += vct_skipcrlf(p);
+		p = vct_skipcrlf(p, hp->rx_e);
 		*q = '\0';
 	} else {
 		*p++ = '\0';
@@ -450,30 +452,29 @@ http_splitheader(struct http *hp, int req)
 		while (vct_issp(*p))		/* XXX: H space only */
 			p++;
 		hh[n++] = p;
-		while (!vct_iscrlf(p))
+		while (!vct_iscrlf(p, hp->rx_e))
 			p++;
 		q = p;
-		p += vct_skipcrlf(p);
+		p = vct_skipcrlf(p, hp->rx_e);
 		*q = '\0';
 	}
 	assert(n == 3);
 
 	while (*p != '\0') {
 		assert(n < MAX_HDR);
-		if (vct_iscrlf(p))
+		if (vct_iscrlf(p, hp->rx_e))
 			break;
 		hh[n++] = p++;
-		while (*p != '\0' && !vct_iscrlf(p))
+		while (*p != '\0' && !vct_iscrlf(p, hp->rx_e))
 			p++;
 		if (*p == '\0') {
 			break;
 		}
 		q = p;
-		p += vct_skipcrlf(p);
+		p = vct_skipcrlf(p, hp->rx_e);
 		*q = '\0';
 	}
-	if (*p != '\0')
-		p += vct_skipcrlf(p);
+	p = vct_skipcrlf(p, hp->rx_e);
 	assert(*p == '\0');
 
 	for (n = 0; n < 3 || hh[n] != NULL; n++) {
@@ -569,7 +570,7 @@ http_rxchunk(struct http *hp)
 	old = hp->rx_p;
 	if (http_rxchar(hp, 2, 0) < 0)
 		return (-1);
-	if (!vct_iscrlf(old)) {
+	if (!vct_iscrlf(old, hp->rx_e)) {
 		vtc_log(hp->vl, hp->fatal, "Chunklen without CRLF");
 		return (-1);
 	}
@@ -749,116 +750,22 @@ cmd_http_rxresphdrs(CMD_ARGS)
 		    "Multiple Content-Length headers.\n");
 }
 
-/**********************************************************************
- * Ungzip rx'ed body
+/* SECTION: client-server.spec.gunzip
+ *
+ * gunzip
+ *         Gunzip the body in place.
  */
-
-#define OVERHEAD 64L
-
 static void
 cmd_http_gunzip(CMD_ARGS)
 {
-	int i;
-	z_stream vz;
 	struct http *hp;
-	char *p;
-	unsigned l;
 
 	(void)av;
 	(void)cmd;
 	(void)vl;
+
 	CAST_OBJ_NOTNULL(hp, priv, HTTP_MAGIC);
-
-	memset(&vz, 0, sizeof vz);
-
-	AN(hp->body);
-	if (hp->body[0] != (char)0x1f || hp->body[1] != (char)0x8b)
-		vtc_log(hp->vl, hp->fatal,
-		    "Gunzip error: Body lacks gzip magics");
-	vz.next_in = TRUST_ME(hp->body);
-	vz.avail_in = hp->bodyl;
-
-	l = hp->bodyl * 10;
-	p = calloc(1, l);
-	AN(p);
-
-	vz.next_out = TRUST_ME(p);
-	vz.avail_out = l;
-
-	assert(Z_OK == inflateInit2(&vz, 31));
-	i = inflate(&vz, Z_FINISH);
-	assert(vz.total_out < l);
-	hp->bodyl = vz.total_out;
-	memcpy(hp->body, p, hp->bodyl);
-	free(p);
-	vtc_log(hp->vl, 3, "new bodylen %u", hp->bodyl);
-	vtc_dump(hp->vl, 4, "body", hp->body, hp->bodyl);
-	bprintf(hp->bodylen, "%u", hp->bodyl);
-#ifdef VGZ_EXTENSIONS
-	vtc_log(hp->vl, 4, "startbit = %ju %ju/%ju",
-	    (uintmax_t)vz.start_bit,
-	    (uintmax_t)vz.start_bit >> 3, (uintmax_t)vz.start_bit & 7);
-	vtc_log(hp->vl, 4, "lastbit = %ju %ju/%ju",
-	    (uintmax_t)vz.last_bit,
-	    (uintmax_t)vz.last_bit >> 3, (uintmax_t)vz.last_bit & 7);
-	vtc_log(hp->vl, 4, "stopbit = %ju %ju/%ju",
-	    (uintmax_t)vz.stop_bit,
-	    (uintmax_t)vz.stop_bit >> 3, (uintmax_t)vz.stop_bit & 7);
-#endif
-	if (i != Z_STREAM_END)
-		vtc_log(hp->vl, hp->fatal,
-		    "Gunzip error = %d (%s) in:%jd out:%jd",
-		    i, vz.msg, (intmax_t)vz.total_in, (intmax_t)vz.total_out);
-	assert(Z_OK == inflateEnd(&vz));
-	hp->body[hp->bodyl] = '\0';
-}
-
-/**********************************************************************
- * Create a gzip'ed body
- */
-
-static void
-gzip_body(const struct http *hp, const char *txt, char **body, int *bodylen)
-{
-	int l;
-	z_stream vz;
-#ifdef VGZ_EXTENSIONS
-	int i;
-#endif
-
-	memset(&vz, 0, sizeof vz);
-
-	l = strlen(txt);
-	*body = calloc(1, l + OVERHEAD);
-	AN(*body);
-
-	vz.next_in = TRUST_ME(txt);
-	vz.avail_in = l;
-
-	vz.next_out = TRUST_ME(*body);
-	vz.avail_out = l + OVERHEAD;
-
-	assert(Z_OK == deflateInit2(&vz,
-	    hp->gziplevel, Z_DEFLATED, 31, 9, Z_DEFAULT_STRATEGY));
-	assert(Z_STREAM_END == deflate(&vz, Z_FINISH));
-	*bodylen = vz.total_out;
-#ifdef VGZ_EXTENSIONS
-	i = vz.stop_bit & 7;
-	if (hp->gzipresidual >= 0 && hp->gzipresidual != i)
-		vtc_log(hp->vl, hp->fatal,
-		    "Wrong gzip residual got %d wanted %d",
-		    i, hp->gzipresidual);
-	vtc_log(hp->vl, 4, "startbit = %ju %ju/%ju",
-	    (uintmax_t)vz.start_bit,
-	    (uintmax_t)vz.start_bit >> 3, (uintmax_t)vz.start_bit & 7);
-	vtc_log(hp->vl, 4, "lastbit = %ju %ju/%ju",
-	    (uintmax_t)vz.last_bit,
-	    (uintmax_t)vz.last_bit >> 3, (uintmax_t)vz.last_bit & 7);
-	vtc_log(hp->vl, 4, "stopbit = %ju %ju/%ju",
-	    (uintmax_t)vz.stop_bit,
-	    (uintmax_t)vz.stop_bit >> 3, (uintmax_t)vz.stop_bit & 7);
-	assert(Z_OK == deflateEnd(&vz));
-#endif
+	vtc_gunzip(hp, hp->body, &hp->bodyl);
 }
 
 /**********************************************************************
@@ -869,7 +776,7 @@ static char* const *
 http_tx_parse_args(char * const *av, struct vtclog *vl, struct http *hp,
     char *body, unsigned nohost)
 {
-	int bodylen = 0;
+	long bodylen = 0;
 	char *b, *c;
 	char *nullbody;
 	char *m;
@@ -942,7 +849,7 @@ http_tx_parse_args(char * const *av, struct vtclog *vl, struct http *hp,
 			assert(body == nullbody);
 			free(body);
 			b = synth_body(av[1], 1);
-			gzip_body(hp, b, &body, &bodylen);
+			vtc_gzip(hp, b, &body, &bodylen);
 			free(b);
 			VSB_printf(hp->vsb, "Content-Encoding: gzip%s", nl);
 			// vtc_hexdump(hp->vl, 4, "gzip", (void*)body, bodylen);
@@ -950,7 +857,7 @@ http_tx_parse_args(char * const *av, struct vtclog *vl, struct http *hp,
 		} else if (!strcmp(*av, "-gzipbody")) {
 			assert(body == nullbody);
 			free(body);
-			gzip_body(hp, av[1], &body, &bodylen);
+			vtc_gzip(hp, av[1], &body, &bodylen);
 			VSB_printf(hp->vsb, "Content-Encoding: gzip%s", nl);
 			// vtc_hexdump(hp->vl, 4, "gzip", (void*)body, bodylen);
 			av++;
@@ -964,7 +871,7 @@ http_tx_parse_args(char * const *av, struct vtclog *vl, struct http *hp,
 		free(m);
 	}
 	if (body != NULL && !nolen)
-		VSB_printf(hp->vsb, "Content-Length: %d%s", bodylen, nl);
+		VSB_printf(hp->vsb, "Content-Length: %ld%s", bodylen, nl);
 	VSB_cat(hp->vsb, nl);
 	if (body != NULL) {
 		VSB_bcat(hp->vsb, body, bodylen);
@@ -1031,18 +938,18 @@ http_tx_parse_args(char * const *av, struct vtclog *vl, struct http *hp,
  *                 Generate and input a body that is NUMBER bytes-long.
  *
  *         \-gziplevel NUMBER
- *		   Set the gzip level (call it before any of the other gzip
- *		   switches).
+ *                 Set the gzip level (call it before any of the other gzip
+ *                 switches).
  *
  *         \-gzipresidual NUMBER
  *                 Add extra gzip bits. You should never need it.
  *
  *         \-gzipbody STRING
- *                 Zip STRING and send it as body.
+ *                 Gzip STRING and send it as body.
  *
  *         \-gziplen NUMBER
- *                 Combine -body and -gzipbody: create a body of length NUMBER,
- *                 zip it and send as body.
+ *                 Combine -bodylen and -gzipbody: generate a string of length
+ *                 NUMBER, gzip it and send as body.
  */
 
 /**********************************************************************
@@ -1474,7 +1381,7 @@ cmd_http_sendhex(CMD_ARGS)
 	vsb = vtc_hex_to_bin(hp->vl, av[1]);
 	assert(VSB_len(vsb) >= 0);
 	vtc_hexdump(hp->vl, 4, "sendhex", VSB_data(vsb), VSB_len(vsb));
-	if (VSB_tofile(hp->fd, vsb))
+	if (VSB_tofile(vsb, hp->fd))
 		vtc_log(hp->vl, hp->fatal, "Write failed: %s",
 		    strerror(errno));
 	VSB_destroy(&vsb);

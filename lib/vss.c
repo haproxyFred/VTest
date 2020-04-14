@@ -6,6 +6,8 @@
  * Author: Dag-Erling Smørgrav <des@des.no>
  * Author: Cecilie Fritzvold <cecilihf@linpro.no>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -129,7 +131,9 @@ vss_resolve(const char *addr, const char *def_port, int family, int socktype,
 	ret = getaddrinfo(hp, def_port, &hints, res);
 	free(p);
 
-	if (ret != 0)
+	if (ret == EAI_SYSTEM)
+		*errp = vstrerror(errno);
+	else if (ret != 0)
 		*errp = gai_strerror(ret);
 
 	return (ret);

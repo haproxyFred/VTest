@@ -4,6 +4,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -227,7 +229,8 @@ vtc_dump(struct vtclog *vl, int lvl, const char *pfx, const char *str, int len)
 		if (len < 0)
 			len = strlen(str);
 		VSB_quote_pfx(vl->vsb, buf, str,
-		    len > MAX_DUMP ? MAX_DUMP : len, VSB_QUOTE_UNSAFE);
+		    len > MAX_DUMP ? MAX_DUMP : len,
+		    VSB_QUOTE_UNSAFE | VSB_QUOTE_ESCHEX);
 		if (len > MAX_DUMP)
 			VSB_printf(vl->vsb, "%s [...] (%d)\n",
 			    buf, len - MAX_DUMP);
@@ -256,7 +259,7 @@ vtc_hexdump(struct vtclog *vl, int lvl, const char *pfx,
 	else {
 		for (l = 0; l < len; l++, ss++) {
 			if (l > 512) {
-				VSB_printf(vl->vsb, "...");
+				VSB_cat(vl->vsb, "...");
 				break;
 			}
 			if (nl) {
@@ -265,13 +268,13 @@ vtc_hexdump(struct vtclog *vl, int lvl, const char *pfx,
 			}
 			VSB_printf(vl->vsb, " %02x", *ss);
 			if ((l & 0xf) == 0xf) {
-				VSB_printf(vl->vsb, "\n");
+				VSB_cat(vl->vsb, "\n");
 				nl = 1;
 			}
 		}
 	}
 	if (!nl)
-		VSB_printf(vl->vsb, "\n");
+		VSB_cat(vl->vsb, "\n");
 	REL_VL(vl);
 	if (lvl == 0)
 		vtc_logfail();

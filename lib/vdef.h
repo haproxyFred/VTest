@@ -9,6 +9,8 @@
  *
  * Inspired by FreeBSD's <sys/cdefs.h>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -56,6 +58,17 @@
 		assert(ivbprintf >= 0 && ivbprintf < (int)sizeof buf);	\
 	} while (0)
 
+/* Safe strcpy into a fixed-size buffer */
+#define bstrcpy(dst, src)						\
+	do {								\
+		assert(strlen(src) + 1 <= sizeof (dst));		\
+		strcpy((dst), (src));					\
+	} while (0)
+
+// TODO #define strcpy BANNED
+// TODO then revert 0fa4baead49f0a45f68d3db0b7743c5e4e93ad4d
+// TODO and replace with flexelint exception
+
 /* Close and discard filedescriptor */
 #define closefd(fdp)				\
 	do {					\
@@ -85,6 +98,12 @@
 #  define v_deprecated_ __attribute__((deprecated))
 #else
 #  define v_deprecated_
+#endif
+
+#if __GNUC_PREREQ__(4,4) // added 2008-07-23
+#  define v_dont_optimize __attribute__((optimize("O")))
+#else
+#  define v_dont_optimize
 #endif
 
 /*********************************************************************

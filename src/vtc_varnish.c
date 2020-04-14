@@ -4,6 +4,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -119,7 +121,7 @@ varnish_ask_cli(const struct varnish *v, const char *cmd, char **repl)
 	i = VCLI_ReadResult(v->cli_fd, &retval, &r, vtc_maxdur);
 	if (i != 0 && !vtc_stop)
 		vtc_fatal(v->vl, "CLI failed (%s) = %d %u %s",
-		    cmd, i, retval, r);
+		    cmd != NULL ? cmd : "NULL", i, retval, r);
 	vtc_log(v->vl, 3, "CLI RX  %u", retval);
 	vtc_dump(v->vl, 4, "CLI RX", r, -1);
 	if (repl != NULL)
@@ -174,11 +176,12 @@ wait_running(const struct varnish *v)
 			vtc_fatal(v->vl,
 			    "Child stopped before running: %u %s", st, r);
 		if (!strcmp(r, "Child in state running")) {
+			free(r);
+			r = NULL;
 			st = varnish_ask_cli(v, "debug.listen_address", &r);
 			if (st != CLIS_OK)
 				vtc_fatal(v->vl,
-					  "CLI status command failed: %u %s",
-					  st, r);
+				    "CLI status command failed: %u %s", st, r);
 			free(r);
 			break;
 		}
@@ -349,7 +352,9 @@ varnish_delete(struct varnish *v)
 	CHECK_OBJ_NOTNULL(v, VARNISH_MAGIC);
 	vtc_logclose(v->vl);
 	free(v->name);
+	free(v->jail);
 	free(v->workdir);
+	VSB_destroy(&v->args);
 	if (v->vsc != NULL)
 		VSC_Destroy(&v->vsc, v->vsm_vsc);
 	if (v->vsm_vsc != NULL)
@@ -407,24 +412,22 @@ varnish_launch(struct varnish *v)
 	vtc_log(v->vl, 2, "Launch");
 	vsb = VSB_new_auto();
 	AN(vsb);
-	VSB_printf(vsb, "cd ${pwd} &&");
+	VSB_cat(vsb, "cd ${pwd} &&");
 	VSB_printf(vsb, " exec varnishd %s -d -n %s",
 	    v->jail, v->workdir);
 	VSB_cat(vsb, VSB_data(params_vsb));
-	if (vtc_witness)
-		VSB_cat(vsb, " -p debug=+witness");
 	if (leave_temp) {
 		VSB_cat(vsb, " -p debug=+vcl_keep");
 		VSB_cat(vsb, " -p debug=+vmod_so_keep");
 		VSB_cat(vsb, " -p debug=+vsm_keep");
 	}
-	VSB_printf(vsb, " -l 2m");
-	VSB_printf(vsb, " -p auto_restart=off");
-	VSB_printf(vsb, " -p syslog_cli_traffic=off");
-	VSB_printf(vsb, " -p sigsegv_handler=on");
-	VSB_printf(vsb, " -p thread_pool_min=10");
-	VSB_printf(vsb, " -p debug=+vtc_mode");
-	VSB_printf(vsb, " -p vsl_mask=+Debug");
+	VSB_cat(vsb, " -l 2m");
+	VSB_cat(vsb, " -p auto_restart=off");
+	VSB_cat(vsb, " -p syslog_cli_traffic=off");
+	VSB_cat(vsb, " -p sigsegv_handler=on");
+	VSB_cat(vsb, " -p thread_pool_min=10");
+	VSB_cat(vsb, " -p debug=+vtc_mode");
+	VSB_cat(vsb, " -p vsl_mask=+Debug");
 	if (!v->has_a_arg) {
 		VSB_printf(vsb, " -a '%s'", "127.0.0.1:0");
 		if (v->proto != NULL)
@@ -508,7 +511,7 @@ varnish_launch(struct varnish *v)
 	assert(nfd >= 0);
 
 	assert(sizeof abuf >= CLI_AUTH_RESPONSE_LEN + 7);
-	strcpy(abuf, "auth ");
+	bstrcpy(abuf, "auth ");
 	VCLI_AuthResponse(nfd, r, abuf + 5);
 	closefd(&nfd);
 	free(r);

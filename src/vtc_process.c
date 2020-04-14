@@ -4,6 +4,8 @@
  *
  * Author: Dridi Boukelmoune <dridi@varnish-software.com>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -513,6 +515,13 @@ process_stderr(const struct vev *ev, int what)
 	return (0);
 }
 
+static void
+process_cleanup(void *priv)
+{
+	struct vev_root *evb = priv;
+	VEV_Destroy(&evb);
+}
+
 static void *
 process_thread(void *priv)
 {
@@ -530,6 +539,7 @@ process_thread(void *priv)
 
 	evb = VEV_New();
 	AN(evb);
+	pthread_cleanup_push(process_cleanup, evb);
 
 	ev = VEV_Alloc();
 	AN(ev);
@@ -575,6 +585,7 @@ process_thread(void *priv)
 
 	AZ(pthread_mutex_unlock(&p->mtx));
 
+	pthread_cleanup_pop(0);
 	VEV_Destroy(&evb);
 	if (p->log == 1) {
 		VLU_Destroy(&p->vlu_stdout);
@@ -792,7 +803,7 @@ process_write_hex(const struct process *p, const char *text)
 	vsb = vtc_hex_to_bin(p->vl, text);
 	assert(VSB_len(vsb) >= 0);
 	vtc_hexdump(p->vl, 4, "sendhex", VSB_data(vsb), VSB_len(vsb));
-	AZ(VSB_tofile(p->fd_term, vsb));
+	AZ(VSB_tofile(vsb, p->fd_term));
 	VSB_destroy(&vsb);
 }
 

@@ -4,6 +4,8 @@
  *
  * Author: Guillaume Quintard <guillaume.quintard@gmail.com>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -379,12 +381,16 @@ HPK_DecHdr(struct hpk_iter *iter, struct hpk_hdr *header)
 			return (hpk_err);
 		txtcpy(&header->key, t);
 	} else {
-		if (hpk_more != str_decode(iter, &header->key))
+		if (hpk_more != str_decode(iter, &header->key)) {
+			free(header->key.ptr);
 			return (hpk_err);
+		}
 	}
 
-	if (hpk_err == str_decode(iter, &header->value))
+	if (hpk_err == str_decode(iter, &header->value)) {
+		free(header->key.ptr);
 		return (hpk_err);
+	}
 
 	if (must_index)
 		push_header(iter->ctx, header);

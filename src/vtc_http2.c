@@ -4,6 +4,8 @@
  *
  * Author: Guillaume Quintard <guillaume.quintard@gmail.com>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -61,14 +63,15 @@ static const char *const h2_types[] = {
 	NULL
 };
 
-#define SETTINGS_MAX 0x06
-
 static const char * const h2_settings[] = {
 	[0] = "unknown",
 #define H2_SETTING(U,l,v,...) [v] = #U,
 #include <tbl/h2_settings.h>
 	NULL
 };
+
+#define SETTINGS_MAX (sizeof(h2_settings)/sizeof(h2_settings[0]) - 1U)
+
 
 enum h2_type {
 #define H2_FRAME(l,u,t,f,...) TYPE_##u = t,
@@ -115,13 +118,16 @@ struct stream {
 static void
 clean_headers(struct hpk_hdr *h)
 {
-	while (h->t) {
+	unsigned n = MAX_HDR;
+
+	while (h->t && n > 0) {
 		if (h->key.len)
 			free(h->key.ptr);
 		if (h->value.len)
 			free(h->value.ptr);
 		memset(h, 0, sizeof(*h));
 		h++;
+		n--;
 	}
 }
 
@@ -283,18 +289,30 @@ do { \
 } while(0)
 
 static void
-clean_frame(struct frame **f)
+replace_frame(struct frame **fp, struct frame *new)
 {
-	AN(f);
-	if (!*f)
+	struct frame *old;
+
+	AN(fp);
+	CHECK_OBJ_ORNULL(new, FRAME_MAGIC);
+
+	old = *fp;
+	*fp = new;
+	if (old == NULL)
 		return;
 
-	CHECK_OBJ_NOTNULL(*f, FRAME_MAGIC);
+	CHECK_OBJ(old, FRAME_MAGIC);
+	if (old->type == TYPE_GOAWAY)
+		free(old->md.goaway.debug);
+	free(old->data);
+	FREE_OBJ(old);
+}
 
-	if ((*f)->type == TYPE_GOAWAY)
-		free((*f)->md.goaway.debug);
-	free((*f)->data);
-	FREE_OBJ(*f);
+static void
+clean_frame(struct frame **fp)
+{
+
+	replace_frame(fp, NULL);
 }
 
 static void
@@ -569,8 +587,8 @@ static void
 parse_settings(const struct stream *s, struct frame *f)
 {
 	struct http *hp;
-	int t, v;
-	unsigned u;
+	int v;
+	unsigned u, t;
 	const char *buf;
 	enum hpk_result r;
 	CHECK_OBJ_NOTNULL(f, FRAME_MAGIC);
@@ -600,7 +618,7 @@ parse_settings(const struct stream *s, struct frame *f)
 			assert(r == hpk_done);
 		}
 
-		vtc_log(hp->vl, 4, "settings->%s (%d): %d", buf, t, v);
+		vtc_log(hp->vl, 4, "settings->%s (%u): %d", buf, t, v);
 	}
 
 }
@@ -709,7 +727,7 @@ receive_frame(void *priv)
 		}
 		AZ(pthread_mutex_unlock(&hp->mtx));
 
-		if (!get_bytes(hp, hdr, 9)) {
+		if (get_bytes(hp, hdr, sizeof hdr) <= 0) {
 			AZ(pthread_mutex_lock(&hp->mtx));
 			VTAILQ_FOREACH(s, &hp->streams, list)
 				AZ(pthread_cond_signal(&s->cond));
@@ -782,6 +800,7 @@ receive_frame(void *priv)
 					else
 						hdrs = s->resp;
 				}
+				clean_headers(hdrs);
 				hdrs[0].t = hpk_unset;
 				AZ(vsb);
 				vsb = VSB_new_auto();
@@ -1330,8 +1349,15 @@ cmd_sendhex(CMD_ARGS)
  *	Same as ``-body`` but content is read from FILE.
  *
  * \-bodylen INT (txreq, txresp)
- *	Do the same thing as ``-body`` but generate an string of INT length
+ *	Do the same thing as ``-body`` but generate a string of INT length
  *	for you.
+ *
+ * \-gzipbody STRING (txreq, txresp)
+ *      Gzip STRING and send it as body.
+ *
+ * \-gziplen NUMBER (txreq, txresp)
+ *      Combine -bodylen and -gzipbody: generate a string of length NUMBER,
+ *      gzip it and send as body.
  *
  * \-nostrend (txreq, txresp)
  *	Don't set the END_STREAM flag automatically, making the peer expect
@@ -1373,7 +1399,7 @@ cmd_tx11obj(CMD_ARGS)
 	int method_done = 1;
 	int path_done = 1;
 	int scheme_done = 1;
-	int bodylen = 0;
+	long bodylen = 0;
 	ssize_t len;
 	uint32_t stid = 0, pstid;
 	uint32_t weight = 16;
@@ -1385,7 +1411,7 @@ cmd_tx11obj(CMD_ARGS)
 	/*XXX: do we need a better api? yes we do */
 	struct hpk_hdr hdr;
 	char *cmd_str = *av;
-	char *p;
+	char *b, *p;
 	(void)cmd;
 
 	CAST_OBJ_NOTNULL(s, priv, STREAM_MAGIC);
@@ -1539,7 +1565,26 @@ cmd_tx11obj(CMD_ARGS)
 				bodylen = strlen(body);
 				f.flags &= ~END_STREAM;
 				av++;
-			}else if (AV_IS("-dep")) {
+			}
+			else if (!strcmp(*av, "-gzipbody")) {
+				AZ(body);
+				vtc_gzip(s->hp, av[1], &body, &bodylen);
+				AN(body);
+				ENC(hdr, ":content-encoding", "gzip");
+				f.flags &= ~END_STREAM;
+				av++;
+			}
+			else if (!strcmp(*av, "-gziplen")) {
+				AZ(body);
+				b = synth_body(av[1], 1);
+				vtc_gzip(s->hp, b, &body, &bodylen);
+				AN(body);
+				free(b);
+				ENC(hdr, ":content-encoding", "gzip");
+				f.flags &= ~END_STREAM;
+				av++;
+			}
+			else if (AV_IS("-dep")) {
 				STRTOU32_CHECK(stid, av, p, vl, "-dep", 0);
 				f.flags |= PRIORITY;
 			}
@@ -2080,10 +2125,9 @@ rxstuff(struct stream *s)
 	}
 	clean_frame(&s->frame);
 	f = VTAILQ_LAST(&s->fq, fq_head);
+	CHECK_OBJ_NOTNULL(f, FRAME_MAGIC);
 	VTAILQ_REMOVE(&s->fq, f, list);
 	AZ(pthread_mutex_unlock(&s->hp->mtx));
-
-	CHECK_OBJ_NOTNULL(f, FRAME_MAGIC);
 	return (f);
 }
 
@@ -2138,14 +2182,14 @@ cmd_rxhdrs(CMD_ARGS)
 		vtc_fatal(vl, "Unknown rxhdrs spec: %s\n", *av);
 
 	do {
-		f = rxstuff(s);
-		if (!f)
-			return;
+		replace_frame(&f, rxstuff(s));
+		if (f == NULL)
+			break;
 		rcv++;
 		CHKFRAME(f->type, expect, rcv, "rxhdrs");
 		expect = TYPE_CONTINUATION;
 	} while (rcv < times || (loop && !(f->flags & END_HEADERS)));
-	s->frame = f;
+	replace_frame(&s->frame, f);
 }
 
 static void
@@ -2176,13 +2220,13 @@ cmd_rxcont(CMD_ARGS)
 		vtc_fatal(vl, "Unknown rxcont spec: %s\n", *av);
 
 	do {
-		f = rxstuff(s);
-		if (!f)
-			return;
+		replace_frame(&f, rxstuff(s));
+		if (f == NULL)
+			break;
 		rcv++;
 		CHKFRAME(f->type, TYPE_CONTINUATION, rcv, "rxcont");
 	} while (rcv < times || (loop && !(f->flags & END_HEADERS)));
-	s->frame = f;
+	replace_frame(&s->frame, f);
 }
 
 
@@ -2227,13 +2271,13 @@ cmd_rxdata(CMD_ARGS)
 		vtc_fatal(vl, "Unknown rxdata spec: %s\n", *av);
 
 	do {
-		f = rxstuff(s);
-		if (!f)
-			return;
+		replace_frame(&f, rxstuff(s));
+		if (f == NULL)
+			break;
 		rcv++;
 		CHKFRAME(f->type, TYPE_DATA, rcv, "rxhdata");
 	} while (rcv < times || (loop && !(f->flags & END_STREAM)));
-	s->frame = f;
+	replace_frame(&s->frame, f);
 }
 
 /* SECTION: stream.spec.data_10 rxreq, rxresp
@@ -2273,19 +2317,22 @@ cmd_rxmsg(CMD_ARGS)
 	end_stream = f->flags & END_STREAM;
 
 	while (!(f->flags & END_HEADERS)) {
-		f = rxstuff(s);
-		if (!f)
+		replace_frame(&f, rxstuff(s));
+		if (f == NULL)
 			return;
 		rcv++;
 		CHKFRAME(f->type, TYPE_CONTINUATION, rcv, *av);
 	}
 
-	while (!end_stream && (f = rxstuff(s)) != NULL) {
+	while (!end_stream) {
+		replace_frame(&f, rxstuff(s));
+		if (f == NULL)
+			break;
 		rcv++;
 		CHKFRAME(f->type, TYPE_DATA, rcv, *av);
 		end_stream = f->flags & END_STREAM;
 	}
-	s->frame = f;
+	replace_frame(&s->frame, f);
 }
 
 /* SECTION: stream.spec.data_12 rxpush
@@ -2437,6 +2484,27 @@ cmd_expect(CMD_ARGS)
 	AZ(pthread_mutex_unlock(&s->hp->mtx));
 }
 
+/* SECTION: stream.spec.gunzip gunzip
+ *
+ * Same as the ``gunzip`` command for HTTP/1.
+ */
+static void
+cmd_gunzip(CMD_ARGS)
+{
+	struct http *hp;
+	struct stream *s;
+
+	(void)av;
+	(void)cmd;
+	(void)vl;
+
+	CAST_OBJ_NOTNULL(s, priv, STREAM_MAGIC);
+	hp = s->hp;
+	CHECK_OBJ_NOTNULL(hp, HTTP_MAGIC);
+
+	vtc_gunzip(s->hp, s->body, &s->bodylen);
+}
+
 /* SECTION: stream.spec.write_body
  *
  * write_body STRING
@@ -2468,6 +2536,7 @@ static const struct cmds stream_cmds[] = {
 #define CMD_STREAM(n) { #n, cmd_##n },
 	/* spec */
 	CMD_STREAM(expect)
+	CMD_STREAM(gunzip)
 	CMD_STREAM(rxcont)
 	CMD_STREAM(rxdata)
 	CMD_STREAM(rxframe)
@@ -2504,11 +2573,7 @@ stream_thread(void *priv)
 	struct stream *s;
 
 	CAST_OBJ_NOTNULL(s, priv, STREAM_MAGIC);
-
 	parse_string(s->spec, stream_cmds, s, s->hp->vl);
-
-	clean_headers(s->req);
-	clean_headers(s->resp);
 	vtc_log(s->hp->vl, 2, "Ending stream %u", s->id);
 	return (NULL);
 }
@@ -2555,7 +2620,17 @@ stream_new(const char *name, struct http *h)
 static void
 stream_delete(struct stream *s)
 {
+	struct frame *f, *f2;
+
 	CHECK_OBJ_NOTNULL(s, STREAM_MAGIC);
+
+	VTAILQ_FOREACH_SAFE(f, &s->fq, list, f2) {
+		VTAILQ_REMOVE(&s->fq, f, list);
+		clean_frame(&f);
+	}
+	clean_headers(s->req);
+	clean_headers(s->resp);
+	AZ(s->frame);
 	free(s->body);
 	free(s->spec);
 	free(s->name);
@@ -2591,8 +2666,10 @@ stream_wait(struct stream *s)
 		vtc_fatal(s->hp->vl, "Stream %u returned \"%s\"", s->id,
 		    (char *)res);
 
-	VTAILQ_FOREACH_SAFE(f, &s->fq, list, f2)
+	VTAILQ_FOREACH_SAFE(f, &s->fq, list, f2) {
+		VTAILQ_REMOVE(&s->fq, f, list);
 		clean_frame(&f);
+	}
 	clean_frame(&s->frame);
 	s->tp = 0;
 	s->running = 0;

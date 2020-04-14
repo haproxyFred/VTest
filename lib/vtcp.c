@@ -5,6 +5,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -151,10 +153,10 @@ VTCP_filter_http(int sock)
 	int retval;
 	struct accept_filter_arg afa;
 
-	memset(&afa, 0, sizeof(afa));
-	strcpy(afa.af_name, "httpready");
+	memset(&afa, 0, sizeof afa);
+	bprintf(afa.af_name, "%s", "httpready");
 	retval = setsockopt(sock, SOL_SOCKET, SO_ACCEPTFILTER,
-	    &afa, sizeof afa );
+	    &afa, sizeof afa);
 	return (retval);
 }
 
@@ -166,7 +168,7 @@ VTCP_filter_http(int sock)
 	int retval;
 	int defer = 1;
 
-	retval = setsockopt(sock, SOL_TCP,TCP_DEFER_ACCEPT,
+	retval = setsockopt(sock, SOL_TCP, TCP_DEFER_ACCEPT,
 	    &defer, sizeof defer);
 	return (retval);
 }
@@ -562,6 +564,10 @@ VTCP_Check(int a)
 		return (1);
 	if (errno == ECONNRESET || errno == ENOTCONN || errno == EPIPE)
 		return (1);
+#if (defined (__SVR4) && defined (__sun))
+	if (errno == EPROTO)
+		return (1);
+#endif
 #if (defined (__SVR4) && defined (__sun)) || defined (__NetBSD__)
 	/*
 	 * Solaris returns EINVAL if the other end unexpectedly reset the

@@ -4,6 +4,8 @@
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
  *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -41,8 +43,8 @@
 
 /* NB: VCT always operate in ASCII, don't replace 0x0d with \r etc. */
 
-#define VCT_UPALPHA	VCT_ALPHA
-#define VCT_LOALPHA	VCT_ALPHA
+#define VCT_UPALPHA	(VCT_ALPHA | VCT_UPPER)
+#define VCT_LOALPHA	(VCT_ALPHA | VCT_LOWER)
 
 const uint16_t vct_typtab[256] = {
 	[0x00]	=	VCT_CTL,
@@ -77,22 +79,22 @@ const uint16_t vct_typtab[256] = {
 	[0x1d]	=	VCT_CTL,
 	[0x1e]	=	VCT_CTL,
 	[0x1f]	=	VCT_CTL,
-	[0x20]  =	VCT_SP,
-	[0x21]  =	VCT_TCHAR,
-	[0x22]  =	VCT_SEPARATOR,
-	[0x23]  =	VCT_TCHAR,
-	[0x24]  =	VCT_TCHAR,
-	[0x25]  =	VCT_TCHAR,
-	[0x26]  =	VCT_TCHAR,
-	[0x27]  =	VCT_TCHAR,
-	[0x28]  =	VCT_SEPARATOR,
-	[0x29]  =	VCT_SEPARATOR,
-	[0x2a]  =	VCT_TCHAR,
-	[0x2b]  =	VCT_TCHAR,
-	[0x2c]  =	VCT_SEPARATOR,
+	[0x20]	=	VCT_SP,
+	[0x21]	=	VCT_TCHAR,
+	[0x22]	=	VCT_SEPARATOR,
+	[0x23]	=	VCT_TCHAR,
+	[0x24]	=	VCT_TCHAR,
+	[0x25]	=	VCT_TCHAR,
+	[0x26]	=	VCT_TCHAR,
+	[0x27]	=	VCT_TCHAR,
+	[0x28]	=	VCT_SEPARATOR,
+	[0x29]	=	VCT_SEPARATOR,
+	[0x2a]	=	VCT_TCHAR,
+	[0x2b]	=	VCT_TCHAR,
+	[0x2c]	=	VCT_SEPARATOR,
 	[0x2d]	=	VCT_XMLNAME | VCT_TCHAR | VCT_ID,
 	[0x2e]	=	VCT_XMLNAME | VCT_TCHAR,
-	[0x2f]  =	VCT_SEPARATOR,
+	[0x2f]	=	VCT_SEPARATOR,
 	[0x30]	=	VCT_DIGIT | VCT_HEX | VCT_XMLNAME,
 	[0x31]	=	VCT_DIGIT | VCT_HEX | VCT_XMLNAME,
 	[0x32]	=	VCT_DIGIT | VCT_HEX | VCT_XMLNAME,
@@ -103,13 +105,13 @@ const uint16_t vct_typtab[256] = {
 	[0x37]	=	VCT_DIGIT | VCT_HEX | VCT_XMLNAME,
 	[0x38]	=	VCT_DIGIT | VCT_HEX | VCT_XMLNAME,
 	[0x39]	=	VCT_DIGIT | VCT_HEX | VCT_XMLNAME,
-	[0x3a]  =	VCT_SEPARATOR | VCT_XMLNAMESTART,
-	[0x3b]  =	VCT_SEPARATOR,
-	[0x3c]  =	VCT_SEPARATOR,
-	[0x3d]  =	VCT_SEPARATOR,
-	[0x3e]  =	VCT_SEPARATOR,
-	[0x3f]  =	VCT_SEPARATOR,
-	[0x40]  =	VCT_SEPARATOR,
+	[0x3a]	=	VCT_SEPARATOR | VCT_XMLNAMESTART,
+	[0x3b]	=	VCT_SEPARATOR,
+	[0x3c]	=	VCT_SEPARATOR,
+	[0x3d]	=	VCT_SEPARATOR,
+	[0x3e]	=	VCT_SEPARATOR,
+	[0x3f]	=	VCT_SEPARATOR,
+	[0x40]	=	VCT_SEPARATOR,
 	[0x41]	=	VCT_UPALPHA | VCT_HEX | VCT_XMLNAMESTART,
 	[0x42]	=	VCT_UPALPHA | VCT_HEX | VCT_XMLNAMESTART,
 	[0x43]	=	VCT_UPALPHA | VCT_HEX | VCT_XMLNAMESTART,
@@ -136,10 +138,10 @@ const uint16_t vct_typtab[256] = {
 	[0x58]	=	VCT_UPALPHA | VCT_XMLNAMESTART,
 	[0x59]	=	VCT_UPALPHA | VCT_XMLNAMESTART,
 	[0x5a]	=	VCT_UPALPHA | VCT_XMLNAMESTART,
-	[0x5b]  =	VCT_SEPARATOR,
-	[0x5c]  =	VCT_SEPARATOR,
-	[0x5d]  =	VCT_SEPARATOR,
-	[0x5e]  =	VCT_TCHAR,
+	[0x5b]	=	VCT_SEPARATOR,
+	[0x5c]	=	VCT_SEPARATOR,
+	[0x5d]	=	VCT_SEPARATOR,
+	[0x5e]	=	VCT_TCHAR,
 	[0x5f]	=	VCT_XMLNAMESTART | VCT_TCHAR | VCT_ID,
 	[0x60]	=	VCT_TCHAR,
 	[0x61]	=	VCT_LOALPHA | VCT_HEX | VCT_XMLNAMESTART,
@@ -168,9 +170,9 @@ const uint16_t vct_typtab[256] = {
 	[0x78]	=	VCT_LOALPHA | VCT_XMLNAMESTART,
 	[0x79]	=	VCT_LOALPHA | VCT_XMLNAMESTART,
 	[0x7a]	=	VCT_LOALPHA | VCT_XMLNAMESTART,
-	[0x7b]  =	VCT_SEPARATOR,
+	[0x7b]	=	VCT_SEPARATOR,
 	[0x7c]	=	VCT_TCHAR,
-	[0x7d]  =	VCT_SEPARATOR,
+	[0x7d]	=	VCT_SEPARATOR,
 	[0x7e]	=	VCT_TCHAR,
 	[0x7f]	=	VCT_CTL,
 	[0xb7]	=	VCT_XMLNAME,

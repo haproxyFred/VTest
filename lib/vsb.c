@@ -3,6 +3,8 @@
  * Copyright (c) 2000-2008 Dag-Erling Coïdan Smørgrav
  * All rights reserved.
  *
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -309,6 +311,8 @@ VSB_cat(struct vsb *s, const char *str)
 
 	assert_VSB_integrity(s);
 	assert_VSB_state(s, 0);
+	KASSERT(str != NULL,
+	    ("%s called with a NULL str pointer", __func__));
 
 	if (s->s_error != 0)
 		return (-1);
@@ -525,9 +529,9 @@ VSB_quote_pfx(struct vsb *s, const char *pfx, const void *v, int len, int how)
 		for (w = u; w < u + len; w++)
 			if (*w != 0x00)
 				break;
-		VSB_printf(s, "0x");
+		VSB_cat(s, "0x");
 		if (w == u + len && len > 4) {
-			VSB_printf(s, "0...0");
+			VSB_cat(s, "0...0");
 		} else {
 			for (w = u; w < u + len; w++)
 				VSB_printf(s, "%02x", *w);
@@ -559,7 +563,7 @@ VSB_quote_pfx(struct vsb *s, const char *pfx, const void *v, int len, int how)
 		nl = 0;
 		switch (*q) {
 		case '?':
-			if (how & VSB_QUOTE_CSTR)
+			if (how & (VSB_QUOTE_CSTR | VSB_QUOTE_GLOB))
 				(void)VSB_putc(s, '\\');
 			(void)VSB_putc(s, *q);
 			break;
@@ -567,6 +571,10 @@ VSB_quote_pfx(struct vsb *s, const char *pfx, const void *v, int len, int how)
 			(void)VSB_putc(s, *q);
 			break;
 		case '\\':
+			if (!(how & (VSB_QUOTE_UNSAFE)))
+				(void)VSB_putc(s, '\\');
+			(void)VSB_putc(s, *q);
+			break;
 		case '"':
 			if (!(how & VSB_QUOTE_UNSAFE))
 				(void)VSB_putc(s, '\\');
@@ -578,18 +586,38 @@ VSB_quote_pfx(struct vsb *s, const char *pfx, const void *v, int len, int how)
 			} else if (how & (VSB_QUOTE_NONL|VSB_QUOTE_UNSAFE)) {
 				(void)VSB_printf(s, "\n");
 				nl = 1;
+			} else if (how & VSB_QUOTE_GLOB) {
+				(void)VSB_printf(s, "\\\\n");
 			} else {
 				(void)VSB_printf(s, "\\n");
 			}
 			break;
 		case '\r':
-			(void)VSB_cat(s, "\\r");
+			if (how & VSB_QUOTE_GLOB)
+				(void)VSB_cat(s, "\\\\r");
+			else
+				(void)VSB_cat(s, "\\r");
 			break;
 		case '\t':
-			(void)VSB_cat(s, "\\t");
+			if (how & VSB_QUOTE_GLOB)
+				(void)VSB_cat(s, "\\\\t");
+			else
+				(void)VSB_cat(s, "\\t");
 			break;
 		case '\v':
-			(void)VSB_cat(s, "\\v");
+			if (how & VSB_QUOTE_GLOB)
+				(void)VSB_cat(s, "\\\\v");
+			else
+				(void)VSB_cat(s, "\\v");
+			break;
+		case '[':
+		case ']':
+		case '{':
+		case '}':
+		case '*':
+			if (how & VSB_QUOTE_GLOB)
+				(void)VSB_putc(s, '\\');
+			(void)VSB_putc(s, *q);
 			break;
 		default:
 			/* XXX: Implement VSB_QUOTE_JSON */
@@ -630,7 +658,7 @@ VSB_indent(struct vsb *s, int i)
 }
 
 int
-VSB_tofile(int fd, const struct vsb *s)
+VSB_tofile(const struct vsb *s, int fd)
 {
 	int sz;
 
